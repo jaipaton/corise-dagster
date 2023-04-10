@@ -49,27 +49,36 @@ def csv_helper(file_name: str) -> Iterator[Stock]:
         for row in reader:
             yield Stock.from_list(row)
 
+@op(config_schema={"s3_key": str}, 
+    out={"stock_list": Out(dagster_type=List[Stock], description="Log of Stocks")})
+def get_s3_data_op(context):
+    s3_key_read = context.op_config['s3_key']
+    stock_list = [i for i in csv_helper(s3_key_read)]
+    return stock_list
 
-@op
-def get_s3_data_op():
+@op(ins={'stock_list': In(dagster_type=List, description='List of Stock elements')},
+    out={'highest_val_agg': Out(dagster_type=Aggregation, description='Stock log with highest daily value')})
+def process_data_op(stock_list):
+
+    high_val = max(s.high for s in stock_list )
+    high_stock = list(filter(lambda stock: stock.high == high_val, stock_list))[0]
+    highest_val_agg = Aggregation(date=high_stock.date, high=high_stock.high)
+    return highest_val_agg
+
+@op(ins={'highest_val_agg': In(dagster_type=Aggregation, description='Stock log with highest daily value - output of process_data_op')})
+def put_redis_data_op(context,highest_val_agg):
     pass
 
 
-@op
-def process_data_op():
-    pass
-
-
-@op
-def put_redis_data_op():
-    pass
-
-
-@op
-def put_s3_data_op():
+@op(ins={'highest_val_agg': In(dagster_type=Aggregation, description='Stock log with highest daily value - output of process_data_op')})
+def put_s3_data_op(context, highest_val_agg):
     pass
 
 
 @job
 def machine_learning_job():
+    s3_input = get_s3_data_op()
+    highest_val_aggregation = process_data_op(s3_input)
+    write_to_redis = put_redis_data_op(highest_val_aggregation)
+    write_to_s3 = put_s3_data_op(highest_val_aggregation)
     pass
